@@ -10,7 +10,6 @@ from ...models.auth import AuthenticatedUser
 from ...database import supabase
 from ...core.redis_client import redis_client
 from ...core.tenant_cache import tenant_cache
-from ...core.tenant_resolver import TenantResolver
 import json
 import time
 import logging

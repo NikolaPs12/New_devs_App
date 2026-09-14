@@ -206,8 +206,11 @@ class RevenueTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_database_failure_does_not_return_mock_revenue(self):
         from sqlalchemy.exc import OperationalError
-        with patch.object(self.session, "execute", side_effect=OperationalError("SELECT", {}, Exception("offline"))):
-            self.assertEqual((await self.summary()).status_code, 503)
+        for error in [OperationalError("SELECT", {}, Exception("offline")), OSError("connection refused")]:
+            with self.subTest(error=type(error).__name__), patch.object(self.session, "execute", side_effect=error):
+                self.assertEqual((await self.summary()).status_code, 503)
+                response = await self.client.get("/api/v1/dashboard/properties", headers=self.headers)
+                self.assertEqual(response.status_code, 503)
         self.assertFalse(self.entries)
 
     async def test_pool_uses_database_url_and_reuses_engine(self):

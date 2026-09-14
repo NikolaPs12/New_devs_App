@@ -29,7 +29,7 @@ async def get_dashboard_properties(
             WHERE tenant_id = :tenant_id ORDER BY id
         """), {"tenant_id": current_user.tenant_id})
         return [dict(row) for row in result.mappings()]
-    except SQLAlchemyError:
+    except (SQLAlchemyError, OSError):
         logger.exception("Could not load dashboard properties")
         raise HTTPException(status_code=503, detail="Property data temporarily unavailable")
 
@@ -52,7 +52,7 @@ async def get_dashboard_summary(
         revenue_data = await get_revenue_summary(
             property_id, current_user.tenant_id, db_session, month, year,
         )
-    except SQLAlchemyError:
+    except (SQLAlchemyError, OSError):
         logger.exception("Could not calculate revenue")
         raise HTTPException(status_code=503, detail="Revenue data temporarily unavailable")
     return {
