@@ -1,0 +1,43 @@
+# Local task instructions
+Agent.md
+
+# Environment variables (keep example configuration)
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Node.js / Vite / TypeScript
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+vite.config.*.timestamp-*
+.eslintcache
+coverage/
+
+# Logs
+*.log
+
+# Local editor and OS files
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
