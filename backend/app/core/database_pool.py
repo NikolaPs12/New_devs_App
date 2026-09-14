@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
 import logging
 
 from sqlalchemy.engine import make_url
@@ -35,7 +36,7 @@ class DatabasePool:
             self.session_factory = None
 
     @asynccontextmanager
-    async def get_session(self):
+    async def get_session(self) -> AsyncIterator[AsyncSession]:
         if self.session_factory is None:
             await self.initialize()
         async with self.session_factory() as session:
@@ -46,6 +47,6 @@ class DatabasePool:
 db_pool = DatabasePool()
 
 
-async def get_db_session() -> AsyncSession:
+async def get_db_session() -> AsyncIterator[AsyncSession]:
     async with db_pool.get_session() as session:
         yield session
