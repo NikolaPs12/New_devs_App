@@ -21,15 +21,9 @@ class TenantResolver:
         Returns:
             Tenant ID if found, None otherwise
         """
-        # Try user_metadata first (most common location)
-        if 'user_metadata' in token_payload:
-            tenant_id = token_payload['user_metadata'].get('tenant_id')
-            if tenant_id:
-                return tenant_id
-
-        # Try app_metadata as fallback
+        # Only server-controlled claims may grant tenant access.
         if 'app_metadata' in token_payload:
-            tenant_id = token_payload['app_metadata'].get('tenant_id')
+            tenant_id = (token_payload['app_metadata'] or {}).get('tenant_id')
             if tenant_id:
                 return tenant_id
 
@@ -52,24 +46,10 @@ class TenantResolver:
         Returns:
             Tenant ID if found, None otherwise
         """
-        # Check various possible locations
-        if 'tenant_id' in user_data:
-            return user_data['tenant_id']
-
-        if 'user_metadata' in user_data:
-            tenant_id = user_data['user_metadata'].get('tenant_id')
-            if tenant_id:
-                return tenant_id
-
-        if 'app_metadata' in user_data:
-            tenant_id = user_data['app_metadata'].get('tenant_id')
-            if tenant_id:
-                return tenant_id
-
-        return None
+        return TenantResolver.resolve_tenant_from_token(user_data)
 
     @staticmethod
-    async def resolve_tenant_id(user_id: str, user_email: str, token: Optional[str] = None) -> str:
+    async def resolve_tenant_id(user_id: str, user_email: str, token: Optional[str] = None) -> Optional[str]:
         """
         Resolve tenant ID for a user.
         
@@ -80,16 +60,22 @@ class TenantResolver:
         Returns:
             Tenant ID
         """
-        # Fallback mapping by known user email.
-        if user_email == "sunset@propertyflow.com":
-            return "tenant-a"
-        if user_email == "ocean@propertyflow.com":
-            return "tenant-b"
-        if user_email == "candidate@propertyflow.com":
-            return "tenant-a"
-            
-        # Default fallback
-        return "tenant-a"
+        from ..database import supabase
+        from ..config import settings
+        from jose import JWTError, jwt
+
+        if token:
+            try:
+                payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"], audience="authenticated")
+                return TenantResolver.resolve_tenant_from_token(payload)
+            except JWTError:
+                response = supabase.auth.get_user(token)
+        else:
+            response = supabase.auth.admin.get_user_by_id(user_id)
+        user = getattr(response, "user", None)
+        if user:
+            return TenantResolver.resolve_tenant_from_user({"app_metadata": user.app_metadata})
+        return None
 
     @staticmethod
     async def update_user_tenant_metadata(user_id: str, tenant_id: str) -> None:

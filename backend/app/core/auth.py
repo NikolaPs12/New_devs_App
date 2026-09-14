@@ -6,6 +6,7 @@ from datetime import datetime
 import logging
 import hashlib
 import asyncio
+import time
 from ..database import supabase
 from ..models.auth import AuthenticatedUser, Permission
 from ..config import settings
@@ -77,6 +78,13 @@ async def authenticate_request(
         )
 
     token = credentials.credentials
+    # A cached identity must never extend the lifetime of its bearer token.
+    try:
+        expires_at = jwt.get_unverified_claims(token).get("exp")
+        if not isinstance(expires_at, (int, float)) or expires_at <= time.time():
+            raise ValueError("Expired or missing expiration")
+    except (JWTError, ValueError, TypeError):
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
     # Create cache key from token hash (more secure than storing full token)
     token_hash = hashlib.sha256(token.encode()).hexdigest()[:16]
 
@@ -123,6 +131,7 @@ async def authenticate_request(
                         self.app_metadata = payload.get('app_metadata', {})
                         self.user_metadata = payload.get('user_metadata', {})
                         self.raw_app_metadata = payload.get('app_metadata', {})
+                        self.tenant_id = payload.get('tenant_id')
                         
                 user = MockUser(payload)
                 
@@ -253,7 +262,12 @@ async def authenticate_request(
         logger.info(f"User: {user.email} (ID: {user.id})")
 
         # Use TenantResolver for comprehensive tenant resolution
-        tenant_id = await TenantResolver.resolve_tenant_id(token=token, user_id=user.id, user_email=user.email)
+        tenant_id = TenantResolver.resolve_tenant_from_user({
+            "app_metadata": user.app_metadata,
+            "tenant_id": getattr(user, "tenant_id", None),
+        })
+        if not tenant_id:
+            raise HTTPException(status_code=403, detail="No tenant assigned")
 
         # If we found a tenant_id and it's not in the user's metadata, update it for next time
         current_tenant_in_metadata = None
