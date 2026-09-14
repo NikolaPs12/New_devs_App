@@ -27,13 +27,13 @@ export function decodeJWTPayload(token: string): JWTClaims | null {
     }
 
     // Get the payload (middle part)
-    const payload = parts[1];
+    const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
     
     // Add padding if needed for base64 decoding
     const paddedPayload = payload + '=='.substring(0, (4 - (payload.length % 4)) % 4);
     
     // Decode base64 and parse JSON
-    const decodedBytes = atob(paddedPayload);
+    const decodedBytes = new TextDecoder().decode(Uint8Array.from(atob(paddedPayload), c => c.charCodeAt(0)));
     const claims = JSON.parse(decodedBytes) as JWTClaims;
     
     return claims;
@@ -53,7 +53,7 @@ export function extractTenantFromSession(session: any): string | null {
 
   try {
     const claims = decodeJWTPayload(session.access_token);
-    const tenantId = claims?.tenant_id;
+    const tenantId = claims?.app_metadata?.tenant_id || claims?.tenant_id;
     
     if (tenantId) {
       if (import.meta.env.DEV) {

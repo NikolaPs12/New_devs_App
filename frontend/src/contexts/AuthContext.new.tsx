@@ -238,7 +238,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signIn = async (email: string, password: string) => {
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { session, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
@@ -247,11 +247,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { error };
       }
 
-      if (data.session) {
-        const enrichedUser = enrichUserWithTenant(data.session);
+      if (session) {
+        const enrichedUser = enrichUserWithTenant(session);
         setUser(enrichedUser);
         setIsAuthenticated(true);
-        authOptimizer.storeSession(data.session);
+        authOptimizer.storeSession(session);
 
         // Restart session persistence manager after successful login
         sessionPersistenceManager.start();

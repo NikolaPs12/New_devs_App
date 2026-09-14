@@ -189,7 +189,7 @@ class RevenueTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.entries)
 
     async def test_invalid_period_and_missing_auth_are_rejected(self):
-        for params in [{"month": 0, "year": 2024}, {"month": 13, "year": 2024}, {"month": 3}, {"year": 9999}]:
+        for params in [{"month": 0, "year": 2024}, {"month": 13, "year": 2024}, {"month": 3}, {"year": 1}, {"year": 9999}]:
             self.assertEqual((await self.summary(**params)).status_code, 422)
         response = await self.client.get("/api/v1/dashboard/summary?property_id=prop-001")
         self.assertEqual(response.status_code, 401)

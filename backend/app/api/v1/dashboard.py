@@ -39,7 +39,7 @@ async def get_dashboard_summary(
     property_id: str,
     response: Response,
     month: int | None = Query(default=None, ge=1, le=12),
-    year: int | None = Query(default=None, ge=1, le=9998),
+    year: int | None = Query(default=None, ge=1900, le=9998),
     current_user: AuthenticatedUser = Depends(get_current_user),
     db_session=Depends(get_db_session),
 ) -> Dict[str, Any]:

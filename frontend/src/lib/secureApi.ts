@@ -1,3 +1,4 @@
+import { decodeJWTPayload } from '../utils/jwtUtils';
 /**
  * SECURE MULTI-TENANT API CLIENT
  * 
@@ -130,7 +131,7 @@ export class SecureAPIClient {
 
       token = session.access_token;
       // Update cached token for next request
-      this.cachedToken = token;
+      this.setAccessToken(token);
     }
 
     return {
@@ -179,18 +180,11 @@ export class SecureAPIClient {
       if (token) {
         let extractedTenantId = null;
 
-        // Handle static local token.
-        if (token === "mock-token-123") {
-          extractedTenantId = "tenant-a";
-        }
-        // Check if it's a valid JWT
-        else if (token.includes('.') && token.split('.').length === 3) {
-          const payload = JSON.parse(atob(token.split('.')[1]));
-          extractedTenantId = payload.user_metadata?.tenant_id || payload.tenant_id;
-        }
+        const payload = decodeJWTPayload(token);
+        extractedTenantId = payload?.app_metadata?.tenant_id || payload?.tenant_id;
 
         if (extractedTenantId) {
-          // Validate tenant ID format (should be UUID)
+          // Validate the tenant claim before using the request cache.
           if (this.isValidTenantId(extractedTenantId)) {
             this.cachedTenantId = extractedTenantId;
             return this.cachedTenantId;
@@ -222,14 +216,14 @@ export class SecureAPIClient {
     try {
       const token = this.cachedToken;
       if (token) {
-        const payload = JSON.parse(atob(token.split('.')[1]));
+        const payload = decodeJWTPayload(token);
         // Use user sub (unique ID) + email as session key for isolation
-        const userSub = payload.sub;
-        const userEmail = payload.email;
+        const userSub = payload?.sub || payload?.id;
+        const userEmail = payload?.email;
 
         if (userSub && userEmail) {
-          // Create short hash to avoid very long cache keys
-          const sessionKey = `${userSub.substring(0, 8)}-${userEmail.split('@')[0]}`;
+          // Keep the complete user identity in the cache key.
+          const sessionKey = JSON.stringify([userSub, userEmail]);
           return sessionKey;
         }
       }
@@ -243,9 +237,8 @@ export class SecureAPIClient {
    * Validate tenant ID format for security
    */
   private isValidTenantId(tenantId: string): boolean {
-    // Check for UUID format (basic validation)
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    return typeof tenantId === 'string' && tenantId.length > 0 && uuidRegex.test(tenantId);
+    // Tenant IDs are text in the database, including the challenge's tenant-a/tenant-b.
+    return typeof tenantId === 'string' && tenantId.trim().length > 0;
   }
 
   /**
@@ -548,17 +541,25 @@ export class SecureAPIClient {
     const timestamp = new Date().toISOString();
     console.log(`[API REQUEST] ${timestamp} - ${method} ${endpoint}`);
 
+    await this.getAuthHeaders();
+    const requestToken = this.cachedToken;
     // Create a tenant-isolated unique key for this request
     const tenantId = await this.getTenantId();
+    if (requestToken !== this.cachedToken) {
+      throw new TenantIsolationError('Session changed during request');
+    }
 
     if (!tenantId) {
       console.warn(`[API SECURITY] No valid tenant ID - bypassing cache for ${endpoint}`);
-      return this.executeRequest<T>(endpoint, options, null, false);
+      return this.executeRequest<T>(endpoint, options, null, false, requestToken);
     }
 
     // Generate cache key that includes query parameters to prevent cache collisions
     // between different filters (e.g., different cleaning tabs)
     const requestKey = await this.generateCacheKey(method, endpoint, tenantId);
+    if (requestToken !== this.cachedToken) {
+      throw new TenantIsolationError('Session changed during request');
+    }
 
     // For GET requests, check cache first (only with valid tenant)
     if (isGetRequest) {
@@ -589,6 +590,9 @@ export class SecureAPIClient {
 
           // Empty overdue results are valid and should be returned from deduplication
           console.log(`[API DEDUP SUCCESS] ${endpoint} - returned cached result`);
+          if (requestToken !== this.cachedToken) {
+            throw new TenantIsolationError('Session changed during request');
+          }
           return result;
         } catch (error) {
           console.warn('[SecureAPI] Pending request failed or timed out, making fresh request:', error);
@@ -599,7 +603,7 @@ export class SecureAPIClient {
     }
 
     // Create the request promise
-    const requestPromise = this.executeRequest<T>(endpoint, options, requestKey, isGetRequest);
+    const requestPromise = this.executeRequest<T>(endpoint, options, requestKey, isGetRequest, requestToken);
 
     // Store pending request for deduplication (only with valid cache key)
     if (isGetRequest && requestKey) {
@@ -616,7 +620,8 @@ export class SecureAPIClient {
     endpoint: string,
     options: RequestInit,
     requestKey: string | null,
-    isGetRequest: boolean
+    isGetRequest: boolean,
+    requestToken: string | null
   ): Promise<T> {
     const MAX_RETRIES = 3; // Increased for better resilience
     const RETRY_DELAY_BASE = 1000; // Reasonable delay for retries
@@ -624,7 +629,13 @@ export class SecureAPIClient {
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
+        if (requestToken !== this.cachedToken) {
+          throw new TenantIsolationError('Session changed during request');
+        }
         const headers = await this.getAuthHeaders();
+        if (requestToken !== this.cachedToken) {
+          throw new TenantIsolationError('Session changed during request');
+        }
         const url = `${this.backendUrl}${endpoint}`;
 
 
@@ -642,6 +653,10 @@ export class SecureAPIClient {
             ...options.headers
           }
         });
+
+        if (requestToken !== this.cachedToken) {
+          throw new TenantIsolationError('Session changed during request');
+        }
 
         if (!response.ok) {
           let bodyText = '';
@@ -685,7 +700,7 @@ export class SecureAPIClient {
 
             if (refreshedSession?.access_token) {
               console.log('[SecureAPI] Session refreshed, will retry with new token');
-              this.cachedToken = refreshedSession.access_token;
+              this.setAccessToken(refreshedSession.access_token);
 
               // Only retry if we haven't exceeded max attempts
               if (attempt < MAX_RETRIES) {
@@ -721,6 +736,10 @@ export class SecureAPIClient {
           // For non-JSON responses, return the text or null
           const text = await response.text();
           data = text || null;
+        }
+
+        if (requestToken !== this.cachedToken) {
+          throw new TenantIsolationError('Session changed during request');
         }
 
         // Cache successful GET requests (with validation for cleaning endpoints)
@@ -1449,23 +1468,20 @@ export class SecureAPIClient {
   }
 
   // ============= DASHBOARD API =============
-  /**
-   * Get dashboard summary with optional simulation header
-   */
-  async getDashboardSummary(propertyId: string, options?: { simulatedTenant?: string, timestamp?: number }) {
+  async getDashboardProperties(): Promise<Array<{ id: string; name: string; timezone: string }>> {
+    return this.request('/api/v1/dashboard/properties');
+  }
+
+  async getDashboardSummary(propertyId: string, options?: { month?: number; year?: number }) {
     const queryParams = new URLSearchParams({ property_id: propertyId });
-    if (options?.timestamp) {
-      queryParams.append('_t', options.timestamp.toString());
-    }
-
-    const requestOptions: RequestInit = {};
-    if (options?.simulatedTenant) {
-      requestOptions.headers = {
-        'X-Simulated-Tenant': options.simulatedTenant
-      };
-    }
-
-    return this.request<any>(`/api/v1/dashboard/summary?${queryParams}`, requestOptions);
+    if (options?.month !== undefined) queryParams.set('month', String(options.month));
+    if (options?.year !== undefined) queryParams.set('year', String(options.year));
+    return this.request<{
+      property_id: string;
+      total_revenue: string;
+      currency: string;
+      reservations_count: number;
+    }>(`/api/v1/dashboard/summary?${queryParams}`);
   }
 
   async uploadCompanyLogo(logo_url: string) {
