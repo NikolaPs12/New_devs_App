@@ -84,17 +84,17 @@ class RevenueCacheTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(ttl, 300)
             entries[key] = value
 
-        async def calculate(property_id, tenant_id):
+        async def calculate(property_id, tenant_id, db_session, month, year):
             return {"property_id": property_id, "tenant_id": tenant_id, "total": tenant_id}
 
         redis = AsyncMock()
         redis.get.side_effect = entries.get
         redis.setex.side_effect = setex
-        with patch("app.services.cache.redis_client", redis), patch(
+        with patch("app.services.cache.get_property", AsyncMock()), patch("app.services.cache.redis_client", redis), patch(
             "app.services.reservations.calculate_total_revenue", side_effect=calculate
         ) as calculator:
             for tenant in ["tenant-a", "tenant-b", "tenant-a", "tenant-b"]:
-                result = await get_revenue_summary("prop-001", tenant)
+                result = await get_revenue_summary("prop-001", tenant, AsyncMock())
                 self.assertEqual(result["tenant_id"], tenant)
             self.assertEqual(calculator.call_count, 2)
 

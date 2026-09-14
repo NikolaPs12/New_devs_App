@@ -1,29 +1,32 @@
 import json
+import logging
+
 import redis.asyncio as redis
-from typing import Dict, Any
-import os
+from redis.exceptions import RedisError
 
-# Initialize Redis client (typically configured centrally).
-redis_client = redis.Redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+from app.config import settings
+from app.services.reservations import get_property
 
-async def get_revenue_summary(property_id: str, tenant_id: str) -> Dict[str, Any]:
-    """
-    Fetches revenue summary, utilizing caching to improve performance.
-    """
-    cache_key = f"revenue:v2:{tenant_id}:{property_id}"
-    
-    # Try to get from cache
-    cached = await redis_client.get(cache_key)
-    if cached:
-        return json.loads(cached)
-    
-    # Revenue calculation is delegated to the reservation service.
+logger = logging.getLogger(__name__)
+redis_client = redis.Redis.from_url(settings.redis_url)
+
+
+async def get_revenue_summary(property_id: str, tenant_id: str, db_session, month=None, year=None):
+    # Check ownership even on cache hits, including properties whose owner changed.
+    await get_property(property_id, tenant_id, db_session)
+    cache_key = f"revenue:v3:{tenant_id}:{property_id}:{year or 'all'}:{month or 'all'}"
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except RedisError:
+        logger.warning("Revenue cache unavailable; calculating from database")
+
     from app.services.reservations import calculate_total_revenue
-    
-    # Calculate revenue
-    result = await calculate_total_revenue(property_id, tenant_id)
-    
-    # Cache the result for 5 minutes
-    await redis_client.setex(cache_key, 300, json.dumps(result))
-    
+
+    result = await calculate_total_revenue(property_id, tenant_id, db_session, month, year)
+    try:
+        await redis_client.setex(cache_key, 300, json.dumps(result))
+    except RedisError:
+        logger.warning("Could not cache revenue summary")
     return result

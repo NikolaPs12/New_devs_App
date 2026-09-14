@@ -15,6 +15,7 @@ import os
 import time
 
 from app.core.redis_client import redis_client
+from app.core.database_pool import db_pool
 from .api.v1 import (
     users_lightning,
     cities,
@@ -89,6 +90,7 @@ async def cache_invalidation_listener():
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting up...")
+    await db_pool.initialize()
 
     # Initialize Supabase connection pool
     try:
@@ -122,6 +124,7 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     logger.info("Shutting down...")
+    await db_pool.close()
 
     # Shutdown async processor
     await async_processor.shutdown()
